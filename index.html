@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Test Game</title>
+  <style>
+    body { margin:0; overflow:hidden; background:#87ceeb; }
+    canvas { display:block; }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+let canvas = document.getElementById("game");
+let ctx = canvas.getContext("2d");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// 赤い四角（プレイヤー）
+let player = { x: canvas.width/2 - 25, y: canvas.height-100, w:50, h:50 };
+
+// 描画
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle = "red";
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+}
+
+// ゲームループ
+function loop(){
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+
+// スマホの傾きで移動
+window.addEventListener("deviceorientation", e=>{
+  if(e.gamma > 5) player.x += 5;   // 右に傾ける
+  if(e.gamma < -5) player.x -= 5;  // 左に傾ける
+  if(player.x < 0) player.x = 0;
+  if(player.x + player.w > canvas.width) player.x = canvas.width - player.w;
+});
+</script>
+</body>
+</html>
