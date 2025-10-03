@@ -1,45 +1,208 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Test Game</title>
-  <style>
-    body { margin:0; overflow:hidden; background:#87ceeb; }
-    canvas { display:block; }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Mobile Shooter Test</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b1020;color:#fff;font-family:system-ui, -apple-system, sans-serif}
+  canvas{display:block;width:100vw;height:100vh}
+  #ui{position:fixed;inset:0;pointer-events:none}
+  #hud{position:fixed;left:10px;top:10px;font-weight:bold;text-shadow:0 2px 4px rgba(0,0,0,.6)}
+  #start,#perm{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.5)}
+  #start button,#perm button{pointer-events:auto;font-size:18px;padding:12px 18px;border-radius:10px;border:none}
+  /* 画面下に左右操作帯、上にショット帯 */
+  #ctrlL,#ctrlR,#ctrlShoot{position:fixed;pointer-events:auto}
+  #ctrlL{left:0;bottom:0;width:50vw;height:120px;background:rgba(255,255,255,.06)}
+  #ctrlR{right:0;bottom:0;width:50vw;height:120px;background:rgba(255,255,255,.10)}
+  #ctrlShoot{left:0;top:0;width:100vw;height:35vh;background:rgba(255,255,255,.02)}
+</style>
 </head>
 <body>
-<canvas id="game"></canvas>
+<canvas id="cv"></canvas>
+
+<!-- 操作UI -->
+<div id="ui">
+  <div id="hud">SCORE 0　LIVES ❤❤❤</div>
+  <div id="ctrlL"></div>
+  <div id="ctrlR"></div>
+  <div id="ctrlShoot"></div>
+</div>
+
+<!-- スタート & ジャイロ許可 -->
+<div id="start"><button id="btnStart">ゲーム開始</button></div>
+<div id="perm" style="display:none"><button id="btnPerm">傾き操作を有効化</button></div>
+
 <script>
-let canvas = document.getElementById("game");
-let ctx = canvas.getContext("2d");
-canvas.width = window.innerWidth;
-canvas.height = window.innerHeight;
+const cv = document.getElementById('cv');
+const cx = cv.getContext('2d');
+const hud = document.getElementById('hud');
+const startPane = document.getElementById('start');
+const permPane  = document.getElementById('perm');
+const ctrlL = document.getElementById('ctrlL');
+const ctrlR = document.getElementById('ctrlR');
+const ctrlShoot = document.getElementById('ctrlShoot');
 
-// 赤い四角（プレイヤー）
-let player = { x: canvas.width/2 - 25, y: canvas.height-100, w:50, h:50 };
+function fit(){ cv.width = innerWidth; cv.height = innerHeight; }
+addEventListener('resize', fit); fit();
 
-// 描画
-function draw(){
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  ctx.fillStyle = "red";
-  ctx.fillRect(player.x, player.y, player.w, player.h);
+// ====== ゲーム状態 ======
+let running=false, over=false;
+let tPrev=0, spawnT=0, score=0, lives=3;
+const P = { x:0, y:0, w:36, h:36, vx:0, speed:260, fireCd:0 };
+const bullets=[], enemies=[], particles=[];
+function reset(){
+  score=0; lives=3; over=false;
+  P.x = cv.width/2-18; P.y = cv.height-100; P.vx=0; bullets.length=0; enemies.length=0; particles.length=0;
+  spawnT=0;
+  hud.textContent = `SCORE ${score}　LIVES ${"❤".repeat(lives)}`;
 }
 
-// ゲームループ
-function loop(){
-  draw();
+function rect(a,b){ return !(a.x+a.w<b.x || b.x+b.w<a.x || a.y+a.h<b.y || b.y+b.h<a.y); }
+
+// ====== ループ ======
+function loop(t){
+  if(!running){ requestAnimationFrame(loop); return; }
+  const dt = Math.min(0.033,(t - tPrev)/1000); tPrev=t;
+
+  // 背景
+  cx.fillStyle = '#0b1020'; cx.fillRect(0,0,cv.width,cv.height);
+  // 星ぽいライン
+  cx.strokeStyle='rgba(255,255,255,.05)'; cx.lineWidth=1;
+  for(let y=0;y<cv.height;y+=18){ cx.beginPath(); cx.moveTo(0,y+(t/40)%18); cx.lineTo(cv.width,y+(t/40)%18); cx.stroke(); }
+
+  // プレイヤー移動
+  P.x += P.vx * dt;
+  if(P.x<0) P.x=0; if(P.x+P.w>cv.width) P.x=cv.width-P.w;
+
+  // プレイヤー描画（三角形）
+  cx.fillStyle='#30e0ff';
+  cx.beginPath();
+  cx.moveTo(P.x+P.w/2, P.y);
+  cx.lineTo(P.x, P.y+P.h);
+  cx.lineTo(P.x+P.w, P.y+P.h);
+  cx.closePath(); cx.fill();
+
+  // 弾
+  P.fireCd -= dt;
+  bullets.forEach(b=>{ b.y -= b.v*dt; });
+  for(let i=bullets.length-1;i>=0;i--) if(bullets[i].y<-20) bullets.splice(i,1);
+  cx.fillStyle='#ffea00';
+  bullets.forEach(b=> cx.fillRect(b.x,b.y,6,14));
+
+  // 敵スポーン
+  spawnT -= dt;
+  if(spawnT<=0){
+    const w=34,h=24;
+    enemies.push({x:Math.random()*(cv.width-w), y:-h-10, w, h, vy:60+Math.random()*80, hp:1});
+    spawnT = Math.max(0.25, 1.2 - score*0.002); // スコアで湧き速度アップ
+  }
+  // 敵移動＆描画
+  enemies.forEach(e=> e.y += e.vy*dt);
+  for(let i=enemies.length-1;i>=0;i--){
+    const e=enemies[i];
+    // 当たり判定（弾）
+    for(let j=bullets.length-1;j>=0;j--){
+      const b=bullets[j];
+      if(rect(e,{x:b.x,y:b.y,w:6,h:14})){
+        bullets.splice(j,1); e.hp--;
+        burst(e.x+e.w/2,e.y+e.h/2,'#ff7b00');
+        if(e.hp<=0){ enemies.splice(i,1); score+=10; hud.textContent=`SCORE ${score}　LIVES ${"❤".repeat(lives)}`; }
+        break;
+      }
+    }
+    // 画面外
+    if(e.y>cv.height+40){ enemies.splice(i,1); continue; }
+  }
+  cx.fillStyle='#ff3b3b';
+  enemies.forEach(e=> cx.fillRect(e.x,e.y,e.w,e.h));
+
+  // プレイヤー被弾
+  if(!over){
+    for(const e of enemies){
+      if(rect(P,e)){
+        lives--; burst(P.x+P.w/2,P.y+P.h/2,'#ff3b3b');
+        hud.textContent=`SCORE ${score}　LIVES ${"❤".repeat(Math.max(0,lives))}`;
+        e.y=cv.height+999; // 退場
+        if(lives<=0){ gameOver(); }
+        break;
+      }
+    }
+  }
+
+  // パーティクル
+  particles.forEach(p=>{ p.x+=p.vx*dt; p.y+=p.vy*dt; p.life-=dt; });
+  for(let i=particles.length-1;i>=0;i--) if(particles[i].life<=0) particles.splice(i,1);
+  particles.forEach(p=>{ cx.fillStyle=p.col; cx.fillRect(p.x,p.y,3,3); });
+
   requestAnimationFrame(loop);
 }
-loop();
 
-// スマホの傾きで移動
-window.addEventListener("deviceorientation", e=>{
-  if(e.gamma > 5) player.x += 5;   // 右に傾ける
-  if(e.gamma < -5) player.x -= 5;  // 左に傾ける
-  if(player.x < 0) player.x = 0;
-  if(player.x + player.w > canvas.width) player.x = canvas.width - player.w;
+function burst(x,y,col){
+  for(let i=0;i<18;i++){
+    const a=Math.random()*Math.PI*2, s=60+Math.random()*160;
+    particles.push({x,y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:.4+.6*Math.random(), col});
+  }
+}
+
+function shoot(){
+  if(P.fireCd>0) return;
+  bullets.push({x:P.x+P.w/2-3, y:P.y-12, v:520});
+  P.fireCd = 0.12;
+}
+
+function gameOver(){
+  over=true; running=false;
+  startPane.style.display='flex';
+  document.getElementById('btnStart').textContent = `GAME OVER / リスタート（スコア${score}）`;
+}
+
+// ====== 操作（タッチ + ジャイロ） ======
+let holdL=false, holdR=false;
+function updateVX(){
+  if(gyro.enabled){ return; } // ジャイロ優先
+  P.vx = (holdL?-1:0 + holdR?1:0) * P.speed;
+}
+['touchstart','mousedown'].forEach(ev=>{
+  ctrlL.addEventListener(ev, ()=>{ holdL=true; updateVX(); }, {passive:true});
+  ctrlR.addEventListener(ev, ()=>{ holdR=true; updateVX(); }, {passive:true});
+  ctrlShoot.addEventListener(ev, ()=> shoot(), {passive:true});
+});
+['touchend','mouseup','mouseleave','touchcancel'].forEach(ev=>{
+  ctrlL.addEventListener(ev, ()=>{ holdL=false; updateVX(); }, {passive:true});
+  ctrlR.addEventListener(ev, ()=>{ holdR=false; updateVX(); }, {passive:true});
+});
+
+// ジャイロ
+const gyro = {enabled:false};
+async function requestGyro(){
+  try{
+    if(typeof DeviceOrientationEvent !== 'undefined' &&
+       typeof DeviceOrientationEvent.requestPermission === 'function'){
+      const r = await DeviceOrientationEvent.requestPermission();
+      if(r !== 'granted') throw new Error('denied');
+    }
+    gyro.enabled = true; permPane.style.display='none';
+  }catch(e){ gyro.enabled=false; permPane.style.display='none'; }
+}
+window.addEventListener('deviceorientation', e=>{
+  if(!gyro.enabled) return;
+  const g = e.gamma || 0; // -90..90
+  if(Math.abs(g)<4) P.vx = 0;
+  else P.vx = (g>0?1:-1) * P.speed * Math.min(1, Math.abs(g)/25);
+});
+
+// ====== 開始/再開 ======
+document.getElementById('btnStart').addEventListener('click', ()=>{
+  if(!gyro.enabled && ('DeviceOrientationEvent' in window)) permPane.style.display='flex';
+  reset(); running=true; startPane.style.display='none'; tPrev=performance.now(); requestAnimationFrame(loop);
+});
+document.getElementById('btnPerm').addEventListener('click', requestGyro);
+
+// タブ非表示時に一時停止（復帰で再開）
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){ running=false; }
+  else if(!over && startPane.style.display==='none'){ running=true; tPrev=performance.now(); requestAnimationFrame(loop); }
 });
 </script>
 </body>
